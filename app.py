@@ -129,13 +129,18 @@ def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
             bid = row.get("bid", 0) or 0
             ask = row.get("ask", 0) or 0
             last = row.get("lastPrice", 0) or 0
-            oi = row.get("openInterest", 0) or 0
-            vol = row.get("volume", 0) or 0
+            oi = row.get("openInterest", 0)
+            oi = 0 if pd.isna(oi) else oi
+            vol = row.get("volume", 0)
+            vol = 0 if pd.isna(vol) else vol
 
             premium = bid if bid > 0 else last
             if premium <= 0 or K >= spot:
                 continue
-            if oi < min_oi:
+            # Yahoo's free feed frequently reports openInterest as 0/blank even
+            # when the contract is actively trading, so fall back to volume.
+            liquidity = oi if oi > 0 else vol
+            if liquidity < min_oi:
                 continue
 
             spread_pct = np.nan
@@ -213,7 +218,11 @@ with st.sidebar:
     win_prob_min, win_prob_max = st.slider("Win probability %", 50, 99, (75, 85))
 
     st.subheader("Liquidity filters")
-    min_oi = st.number_input("Minimum open interest", min_value=0, value=300, step=5)
+    min_oi = st.number_input(
+        "Minimum open interest",
+        min_value=0, value=300, step=5,
+        help="Falls back to volume when Yahoo reports open interest as 0/blank for a contract.",
+    )
     max_spread_pct = st.number_input("Max bid-ask spread %", min_value=1, value=15, step=1)
 
     top_n = st.number_input("Top N per ticker", min_value=1, max_value=10, value=3)
