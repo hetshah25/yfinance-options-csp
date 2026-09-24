@@ -12,6 +12,12 @@ st.set_page_config(page_title="Cash-Secured Put Screener", layout="wide")
 
 # ---------------- Model functions ----------------
 
+LEVERAGE = {
+    "SOXL": 3, "SOXS": 3, "TQQQ": 3, "SQQQ": 3, "SPXL": 3,
+    "SPXS": 3, "TNA": 3, "TZA": 3, "LABU": 3, "LABD": 3,
+    "QLD": 2, "SSO": 2, "UVXY": 2,
+}
+
 @st.cache_data(ttl=3600)
 def get_risk_free_rate():
     try:
@@ -43,6 +49,27 @@ def days_to_expiry(expiry_str):
     return (exp_date - date.today()).days
 
 
+def get_next_earnings_date(tk):
+    try:
+        cal = tk.calendar
+        earnings_dates = cal.get("Earnings Date") if cal else None
+        if earnings_dates:
+            future = [d for d in earnings_dates if d >= date.today()]
+            return min(future) if future else None
+    except Exception:
+        pass
+    try:
+        ed = tk.get_earnings_dates(limit=8)
+        if ed is not None and not ed.empty:
+            idx_dates = [d.date() if hasattr(d, "date") else d for d in ed.index]
+            future = [d for d in idx_dates if d >= date.today()]
+            if future:
+                return min(future)
+    except Exception:
+        pass
+    return None
+
+
 def bs_put_metrics(S, K, T, r, q, sigma):
     if T <= 0 or sigma is None or sigma <= 0 or np.isnan(sigma):
         return np.nan, np.nan
@@ -68,6 +95,8 @@ def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
     low_52w = hist["Close"].min()
     sma_50 = hist["Close"].tail(50).mean()
     dividend_yield = get_dividend_yield(tk)
+    next_earnings = get_next_earnings_date(tk)
+    leverage_multiplier = LEVERAGE.get(ticker_symbol, 1)
 
     candidates = []
 
@@ -91,6 +120,8 @@ def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
             continue
 
         T = dte / 365.0
+        exp_date = datetime.strptime(exp, "%Y-%m-%d").date()
+        earnings_in_window = next_earnings is not None and date.today() <= next_earnings <= exp_date
 
         for _, row in puts.iterrows():
             K = row["strike"]
@@ -123,8 +154,10 @@ def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
 
             yield_pct = (premium / K) * 100
             annualized_yield = yield_pct * (365 / dte)
-            score = win_prob_pct * annualized_yield / 100
+            score = (win_prob_pct / 100) * annualized_yield / leverage_multiplier
             iv_hv_ratio = (iv / hv) if hv and not np.isnan(hv) and hv > 0 else np.nan
+            exit_target_70pct = premium * 0.3
+            exit_target_50pct = premium * 0.5
 
             candidates.append({
                 "Ticker": ticker_symbol,
@@ -140,10 +173,14 @@ def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
                 "Est. Win Prob %": round(win_prob_pct, 1),
                 "Yield %": round(yield_pct, 2),
                 "Annualized Yield %": round(annualized_yield, 1),
-                "Score": round(score, 1),
+                "Score": round(score, 2),
+                "Lev": leverage_multiplier,
                 "Breakeven": round(K - premium, 2),
                 "Capital Req. $": round(K * 100, 0),
                 "Premium $": round(premium * 100, 0),
+                "Exit Target ($)": f"${exit_target_70pct:.2f}–${exit_target_50pct:.2f}",
+                "Next Earnings": next_earnings.strftime("%Y-%m-%d") if next_earnings else "—",
+                "Earnings Alert": "⚠️ In Window" if earnings_in_window else "",
                 "Open Interest": int(oi),
                 "Volume": int(vol),
                 "Spread %": round(spread_pct, 1) if not np.isnan(spread_pct) else np.nan,
@@ -216,7 +253,8 @@ if run_button:
             st.subheader("Per-ticker breakdown")
 
             display_cols = ["Expiration", "DTE", "Strike", "Premium (Bid)", "Delta",
-                             "Est. Win Prob %", "Annualized Yield %", "Score", "IV/HV",
+                             "Est. Win Prob %", "Annualized Yield %", "Score", "Lev", "IV/HV",
+                             "Exit Target ($)", "Next Earnings", "Earnings Alert",
                              "Breakeven", "Capital Req. $", "Open Interest", "Spread %"]
 
             for ticker in tickers:
@@ -230,8 +268,10 @@ if run_button:
                 st.markdown("""
 - **Est. Win Prob %** — model probability the put expires worthless and you keep the full premium. 70-85% is the conventional target band.
 - **IV/HV** — implied vol vs. 30-day realized vol. Above ~1.2 generally means premium is rich relative to how the stock has actually been moving.
-- **Score** — win probability times annualized yield. Use it to shortlist, then check win probability itself before deciding — a high score can come from either a genuinely strong trade or a risky one with a fat premium masking the risk.
-- **Exit rule** — a common approach is closing at 50-70% of max profit rather than holding to expiration, since late-stage premium decays slowest relative to the tail risk of holding on.
+- **Score** — win probability times annualized yield, divided by the underlying's leverage multiplier (see **Lev**). Use it to shortlist, then check win probability itself before deciding — a high score can come from either a genuinely strong trade or a risky one with a fat premium masking the risk.
+- **Lev** — leverage multiplier applied to the underlying (e.g. 3 for SOXL/TQQQ, 2 for SSO/QLD, 1 for unleveraged names). Score is divided by this so leveraged ETFs aren't overrated relative to their real risk.
+- **Exit Target ($)** — the buy-to-close premium range that locks in 50-70% of max profit (70% target price is the lower number, 50% target is the higher number). A common approach is closing in this range rather than holding to expiration, since late-stage premium decays slowest relative to the tail risk of holding on.
+- **Next Earnings / Earnings Alert** — the ticker's next known earnings date, with a ⚠️ flag if it falls inside the option's expiration window. A high-scoring put with this flag set may be an earnings bet in disguise — check the date before trading.
                 """)
 else:
     st.info("Set your filters in the sidebar and click **Run scan** to pull live options data.")
