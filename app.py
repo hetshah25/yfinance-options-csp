@@ -176,7 +176,7 @@ with st.sidebar:
     win_prob_min, win_prob_max = st.slider("Win probability %", 50, 99, (75, 85))
 
     st.subheader("Liquidity filters")
-    min_oi = st.number_input("Minimum open interest", min_value=0, value=25, step=5)
+    min_oi = st.number_input("Minimum open interest", min_value=0, value=300, step=5)
     max_spread_pct = st.number_input("Max bid-ask spread %", min_value=1, value=15, step=1)
 
     top_n = st.number_input("Top N per ticker", min_value=1, max_value=10, value=3)
