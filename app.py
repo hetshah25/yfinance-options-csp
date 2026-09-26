@@ -4,9 +4,11 @@ import pandas as pd
 import numpy as np
 from scipy.stats import norm
 from datetime import datetime, date
+import logging
 import warnings
 
 warnings.filterwarnings("ignore")
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 st.set_page_config(page_title="Cash-Secured Put Screener", layout="wide")
 
@@ -234,7 +236,7 @@ with st.sidebar:
 
     top_n = st.number_input("Top N per ticker", min_value=1, max_value=10, value=3)
 
-    run_button = st.button("Run scan", type="primary", use_container_width=True)
+    run_button = st.button("Run scan", type="primary", width="stretch")
 
 if run_button:
     if not tickers:
@@ -291,7 +293,7 @@ if run_button:
             summary_view = summary[["Ticker"] + display_cols]
             st.dataframe(
                 summary_view.style.apply(highlight_earnings, axis=1).format(currency_fmt),
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
             )
 
             st.divider()
@@ -308,7 +310,7 @@ if run_button:
                 sub_view = sub[display_cols]
                 st.dataframe(
                     sub_view.style.apply(highlight_earnings, axis=1).format(currency_fmt),
-                    use_container_width=True, hide_index=True,
+                    width="stretch", hide_index=True,
                 )
 
             with st.expander("How to read this"):
