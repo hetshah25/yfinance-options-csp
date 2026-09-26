@@ -84,12 +84,13 @@ def bs_put_metrics(S, K, T, r, q, sigma):
 def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
                           win_prob_min, win_prob_max, min_oi, max_spread_pct, top_n):
     tk = yf.Ticker(ticker_symbol)
+    counts = {"puts_in_window": 0, "otm_priced": 0, "liquidity": 0, "spread": 0}
 
     try:
         hist = tk.history(period="1y")
         spot = hist["Close"].iloc[-1]
     except Exception:
-        return pd.DataFrame(), None
+        return pd.DataFrame(), None, counts
 
     hv = historical_volatility(hist["Close"], lookback_days=30)
     low_52w = hist["Close"].min()
@@ -103,7 +104,7 @@ def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
     try:
         expirations = tk.options
     except Exception:
-        return pd.DataFrame(), spot
+        return pd.DataFrame(), spot, counts
 
     for exp in expirations:
         dte = days_to_expiry(exp)
@@ -118,6 +119,8 @@ def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
         puts = chain.puts.copy()
         if puts.empty:
             continue
+
+        counts["puts_in_window"] += len(puts)
 
         T = dte / 365.0
         exp_date = datetime.strptime(exp, "%Y-%m-%d").date()
@@ -137,17 +140,21 @@ def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
             premium = bid if bid > 0 else last
             if premium <= 0 or K >= spot:
                 continue
+            counts["otm_priced"] += 1
+
             # Yahoo's free feed frequently reports openInterest as 0/blank even
             # when the contract is actively trading, so fall back to volume.
             liquidity = oi if oi > 0 else vol
             if liquidity < min_oi:
                 continue
+            counts["liquidity"] += 1
 
             spread_pct = np.nan
             if ask > 0:
                 spread_pct = (ask - bid) / ask * 100
                 if spread_pct > max_spread_pct:
                     continue
+            counts["spread"] += 1
 
             delta, win_prob = bs_put_metrics(spot, K, T, risk_free_rate, dividend_yield, iv)
             if np.isnan(win_prob):
@@ -181,8 +188,8 @@ def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
                 "Score": round(score, 2),
                 "Lev": leverage_multiplier,
                 "Breakeven": round(K - premium, 2),
-                "Capital Req. $": round(K * 100, 0),
-                "Premium $": round(premium * 100, 0),
+                "Capital Req. $": int(round(K * 100)),
+                "Premium $": int(round(premium * 100)),
                 "Exit Target ($)": f"${exit_target_70pct:.2f}–${exit_target_50pct:.2f}",
                 "Next Earnings": next_earnings.strftime("%Y-%m-%d") if next_earnings else "—",
                 "Earnings Alert": "⚠️ In Window" if earnings_in_window else "",
@@ -194,11 +201,11 @@ def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
             })
 
     if not candidates:
-        return pd.DataFrame(), spot
+        return pd.DataFrame(), spot, counts
 
     df = pd.DataFrame(candidates)
     df = df.sort_values(by="Score", ascending=False)
-    return df.head(top_n).reset_index(drop=True), spot
+    return df.head(top_n).reset_index(drop=True), spot, counts
 
 
 # ---------------- UI ----------------
@@ -240,12 +247,27 @@ if run_button:
         progress = st.progress(0.0, text="Scanning...")
 
         for i, ticker in enumerate(tickers):
-            df, spot = scan_ticker_for_csp(
+            df, spot, counts = scan_ticker_for_csp(
                 ticker, rf_rate, min_dte, max_dte,
                 win_prob_min, win_prob_max, min_oi, max_spread_pct, top_n
             )
             if df.empty:
-                st.warning(f"{ticker}: no candidates found in the current window (spot: {spot}).")
+                if spot is None:
+                    st.warning(f"{ticker}: could not fetch price/options data.")
+                elif counts["puts_in_window"] == 0:
+                    st.warning(
+                        f"{ticker}: no option expirations found in the {min_dte}-{max_dte} "
+                        f"day window (spot: ${spot:.2f})."
+                    )
+                else:
+                    st.warning(
+                        f"{ticker}: no candidates found (spot: ${spot:.2f}). "
+                        f"{counts['puts_in_window']} puts in the {min_dte}-{max_dte} DTE window → "
+                        f"{counts['otm_priced']} OTM with a tradeable price → "
+                        f"{counts['liquidity']} passed the open interest/volume filter → "
+                        f"{counts['spread']} passed the spread filter, but none fell within the "
+                        f"{win_prob_min}-{win_prob_max}% win-probability band. Try widening a filter."
+                    )
             else:
                 all_results.append(df)
             progress.progress((i + 1) / len(tickers), text=f"Scanned {ticker}")
@@ -255,13 +277,22 @@ if run_button:
         if all_results:
             summary = pd.concat(all_results, ignore_index=True)
 
-            display_cols = ["Expiration", "DTE", "Strike", "Premium (Bid)", "Delta",
+            display_cols = ["Expiration", "DTE", "Strike", "Premium (Bid)", "Premium $", "Delta",
                              "Est. Win Prob %", "Annualized Yield %", "Score", "Lev", "IV/HV",
                              "Exit Target ($)", "Next Earnings", "Earnings Alert",
                              "Breakeven", "Capital Req. $", "Open Interest", "Spread %"]
+            currency_fmt = {"Capital Req. $": "${:,.0f}", "Premium $": "${:,.0f}"}
+
+            def highlight_earnings(row):
+                color = "background-color: #ffcdd2" if row.get("Earnings Alert") else ""
+                return [color] * len(row)
 
             st.subheader("All candidates (sorted by Score within each ticker)")
-            st.dataframe(summary[["Ticker"] + display_cols], use_container_width=True, hide_index=True)
+            summary_view = summary[["Ticker"] + display_cols]
+            st.dataframe(
+                summary_view.style.apply(highlight_earnings, axis=1).format(currency_fmt),
+                use_container_width=True, hide_index=True,
+            )
 
             st.divider()
             st.subheader("Per-ticker breakdown")
@@ -274,7 +305,11 @@ if run_button:
                     f"**{ticker}** — spot ${sub['Spot Price'].iloc[0]} · "
                     f"50D SMA ${sub['50D SMA'].iloc[0]} · 52W Low ${sub['52W Low'].iloc[0]}"
                 )
-                st.dataframe(sub[display_cols], use_container_width=True, hide_index=True)
+                sub_view = sub[display_cols]
+                st.dataframe(
+                    sub_view.style.apply(highlight_earnings, axis=1).format(currency_fmt),
+                    use_container_width=True, hide_index=True,
+                )
 
             with st.expander("How to read this"):
                 st.markdown("""
@@ -283,7 +318,7 @@ if run_button:
 - **Score** — win probability times annualized yield, divided by the underlying's leverage multiplier (see **Lev**). Use it to shortlist, then check win probability itself before deciding — a high score can come from either a genuinely strong trade or a risky one with a fat premium masking the risk.
 - **Lev** — leverage multiplier applied to the underlying (e.g. 3 for SOXL/TQQQ, 2 for SSO/QLD, 1 for unleveraged names). Score is divided by this so leveraged ETFs aren't overrated relative to their real risk.
 - **Exit Target ($)** — the buy-to-close premium range that locks in 50-70% of max profit (70% target price is the lower number, 50% target is the higher number). A common approach is closing in this range rather than holding to expiration, since late-stage premium decays slowest relative to the tail risk of holding on.
-- **Next Earnings / Earnings Alert** — the ticker's next known earnings date, with a ⚠️ flag if it falls inside the option's expiration window. A high-scoring put with this flag set may be an earnings bet in disguise — check the date before trading.
+- **Next Earnings / Earnings Alert** — the ticker's next known earnings date, with a ⚠️ flag if it falls inside the option's expiration window. A high-scoring put with this flag set may be an earnings bet in disguise — check the date before trading. Rows with the flag set are highlighted red in the tables above.
                 """)
 else:
     st.info("Set your filters in the sidebar and click **Run scan** to pull live options data.")
