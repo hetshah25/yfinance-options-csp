@@ -255,22 +255,25 @@ if run_button:
         if all_results:
             summary = pd.concat(all_results, ignore_index=True)
 
-            st.subheader("All candidates (sorted by Score within each ticker)")
-            st.dataframe(summary, use_container_width=True, hide_index=True)
-
-            st.divider()
-            st.subheader("Per-ticker breakdown")
-
             display_cols = ["Expiration", "DTE", "Strike", "Premium (Bid)", "Delta",
                              "Est. Win Prob %", "Annualized Yield %", "Score", "Lev", "IV/HV",
                              "Exit Target ($)", "Next Earnings", "Earnings Alert",
                              "Breakeven", "Capital Req. $", "Open Interest", "Spread %"]
 
+            st.subheader("All candidates (sorted by Score within each ticker)")
+            st.dataframe(summary[["Ticker"] + display_cols], use_container_width=True, hide_index=True)
+
+            st.divider()
+            st.subheader("Per-ticker breakdown")
+
             for ticker in tickers:
                 sub = summary[summary["Ticker"] == ticker]
                 if sub.empty:
                     continue
-                st.markdown(f"**{ticker}** — spot ${sub['Spot Price'].iloc[0]}")
+                st.markdown(
+                    f"**{ticker}** — spot ${sub['Spot Price'].iloc[0]} · "
+                    f"50D SMA ${sub['50D SMA'].iloc[0]} · 52W Low ${sub['52W Low'].iloc[0]}"
+                )
                 st.dataframe(sub[display_cols], use_container_width=True, hide_index=True)
 
             with st.expander("How to read this"):
