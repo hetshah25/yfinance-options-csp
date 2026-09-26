@@ -219,7 +219,7 @@ with st.sidebar:
     tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
     st.subheader("Expiration window")
-    min_dte, max_dte = st.slider("Days to expiration", 1, 90, (30, 45))
+    min_dte, max_dte = st.slider("Days to expiration", 0, 90, (30, 45))
 
     st.subheader("Win probability target")
     win_prob_min, win_prob_max = st.slider("Win probability %", 50, 99, (75, 85))
