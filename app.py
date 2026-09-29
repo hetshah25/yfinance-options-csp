@@ -217,7 +217,7 @@ st.caption("Live yfinance data. Not financial advice — verify pricing and liqu
 
 with st.sidebar:
     st.header("Settings")
-    tickers_input = st.text_input("Tickers (comma-separated)", "NVDA, SOXL, AAPL, AMD, INTC")
+    tickers_input = st.text_input("Tickers (comma-separated)", "NVDA, SOXL, AAPL, BE, INTC")
     tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
     st.subheader("Expiration window")
