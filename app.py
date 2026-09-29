@@ -224,7 +224,7 @@ with st.sidebar:
     min_dte, max_dte = st.slider("Days to expiration", 0, 90, (30, 45))
 
     st.subheader("Win probability target")
-    win_prob_min, win_prob_max = st.slider("Win probability %", 50, 99, (75, 85))
+    win_prob_min, win_prob_max = st.slider("Win probability %", 50, 99, (80, 95))
 
     st.subheader("Liquidity filters")
     min_oi = st.number_input(
