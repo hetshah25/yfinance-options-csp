@@ -82,6 +82,12 @@ def bs_put_metrics(S, K, T, r, q, sigma):
     return delta, win_prob
 
 
+class ScanFetchError(Exception):
+    pass
+
+
+# Fetch failures raise (instead of returning empty) so st.cache_data does not
+# cache a transient Yahoo failure for the full TTL.
 @st.cache_data(ttl=900)
 def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
                           win_prob_min, win_prob_max, min_oi, max_spread_pct, top_n):
@@ -91,8 +97,8 @@ def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
     try:
         hist = tk.history(period="1y")
         spot = hist["Close"].iloc[-1]
-    except Exception:
-        return pd.DataFrame(), None, counts
+    except Exception as e:
+        raise ScanFetchError("could not fetch price history from Yahoo") from e
 
     hv = historical_volatility(hist["Close"], lookback_days=30)
     low_52w = hist["Close"].min()
@@ -105,9 +111,12 @@ def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
 
     try:
         expirations = tk.options
-    except Exception:
-        return pd.DataFrame(), spot, counts
+    except Exception as e:
+        raise ScanFetchError("could not fetch option expirations from Yahoo") from e
+    if not expirations:
+        raise ScanFetchError("Yahoo returned no option expirations")
 
+    chain_failures = 0
     for exp in expirations:
         dte = days_to_expiry(exp)
         if dte < min_dte or dte > max_dte:
@@ -116,6 +125,7 @@ def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
         try:
             chain = tk.option_chain(exp)
         except Exception:
+            chain_failures += 1
             continue
 
         puts = chain.puts.copy()
@@ -202,6 +212,9 @@ def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
                 "52W Low": round(low_52w, 2),
             })
 
+    if chain_failures and counts["puts_in_window"] == 0:
+        raise ScanFetchError("option chain requests failed for every expiration in the window")
+
     if not candidates:
         return pd.DataFrame(), spot, counts
 
@@ -249,14 +262,17 @@ if run_button:
         progress = st.progress(0.0, text="Scanning...")
 
         for i, ticker in enumerate(tickers):
-            df, spot, counts = scan_ticker_for_csp(
-                ticker, rf_rate, min_dte, max_dte,
-                win_prob_min, win_prob_max, min_oi, max_spread_pct, top_n
-            )
+            try:
+                df, spot, counts = scan_ticker_for_csp(
+                    ticker, rf_rate, min_dte, max_dte,
+                    win_prob_min, win_prob_max, min_oi, max_spread_pct, top_n
+                )
+            except ScanFetchError as e:
+                st.error(f"{ticker}: Yahoo data fetch failed ({e}). Not cached — click Run scan again.")
+                progress.progress((i + 1) / len(tickers), text=f"Scanned {ticker}")
+                continue
             if df.empty:
-                if spot is None:
-                    st.warning(f"{ticker}: could not fetch price/options data.")
-                elif counts["puts_in_window"] == 0:
+                if counts["puts_in_window"] == 0:
                     st.warning(
                         f"{ticker}: no option expirations found in the {min_dte}-{max_dte} "
                         f"day window (spot: ${spot:.2f})."
