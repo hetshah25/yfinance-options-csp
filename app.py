@@ -5,10 +5,13 @@ import numpy as np
 from scipy.stats import norm
 from datetime import datetime, date
 import logging
+import time
 import warnings
 
 warnings.filterwarnings("ignore")
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+# Let yfinance raise HTTP errors so fetch failures can show the real cause.
+yf.config.debug.hide_exceptions = False
 
 st.set_page_config(page_title="Cash-Secured Put Screener", layout="wide")
 
@@ -86,6 +89,19 @@ class ScanFetchError(Exception):
     pass
 
 
+def get_expirations(tk, attempts=3):
+    last_error = "empty response"
+    for attempt in range(attempts):
+        try:
+            expirations = tk.options
+            if expirations:
+                return expirations
+        except Exception as e:
+            last_error = f"{type(e).__name__}: {e}"[:200]
+        time.sleep(1.5 * (attempt + 1))
+    raise ScanFetchError(f"could not fetch option expirations from Yahoo ({last_error})")
+
+
 # Fetch failures raise (instead of returning empty) so st.cache_data does not
 # cache a transient Yahoo failure for the full TTL.
 @st.cache_data(ttl=900)
@@ -109,12 +125,7 @@ def scan_ticker_for_csp(ticker_symbol, risk_free_rate, min_dte, max_dte,
 
     candidates = []
 
-    try:
-        expirations = tk.options
-    except Exception as e:
-        raise ScanFetchError("could not fetch option expirations from Yahoo") from e
-    if not expirations:
-        raise ScanFetchError("Yahoo returned no option expirations")
+    expirations = get_expirations(tk)
 
     chain_failures = 0
     for exp in expirations:
