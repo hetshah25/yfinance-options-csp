@@ -5,6 +5,8 @@ import numpy as np
 from scipy.stats import norm
 from datetime import datetime, date
 import logging
+import os
+import sqlite3
 import time
 import warnings
 
@@ -89,6 +91,28 @@ class ScanFetchError(Exception):
     pass
 
 
+def reset_yahoo_session():
+    """Drop yfinance's cached Yahoo cookie/crumb (in memory and on disk) so the next request re-authenticates."""
+    try:
+        from yfinance import cache as yf_cache
+        from yfinance.data import YfData
+        data = YfData()
+        with data._cookie_lock:
+            data._session.cookies.clear()
+            data._cookie = None
+            data._crumb = None
+        db_path = os.path.join(yf_cache._CookieDBManager.get_location(), "cookies.db")
+        if os.path.exists(db_path):
+            con = sqlite3.connect(db_path)
+            try:
+                con.execute("DELETE FROM _cookieschema")
+                con.commit()
+            finally:
+                con.close()
+    except Exception:
+        pass
+
+
 def get_expirations(tk, attempts=3):
     last_error = "empty response"
     for attempt in range(attempts):
@@ -103,6 +127,8 @@ def get_expirations(tk, attempts=3):
             try:
                 r = tk._data.get(url=f"https://query2.finance.yahoo.com/v7/finance/options/{tk.ticker}")
                 last_error = f"HTTP {r.status_code}: {r.text[:160]}"
+                if r.status_code in (401, 403):
+                    reset_yahoo_session()
             except Exception as e:
                 last_error = f"{type(e).__name__}: {e}"[:200]
         time.sleep(1.5 * (attempt + 1))
