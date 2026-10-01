@@ -98,6 +98,13 @@ def get_expirations(tk, attempts=3):
                 return expirations
         except Exception as e:
             last_error = f"{type(e).__name__}: {e}"[:200]
+        else:
+            # yfinance ignores error bodies here and just returns (), so ask Yahoo directly.
+            try:
+                r = tk._data.get(url=f"https://query2.finance.yahoo.com/v7/finance/options/{tk.ticker}")
+                last_error = f"HTTP {r.status_code}: {r.text[:160]}"
+            except Exception as e:
+                last_error = f"{type(e).__name__}: {e}"[:200]
         time.sleep(1.5 * (attempt + 1))
     raise ScanFetchError(f"could not fetch option expirations from Yahoo ({last_error})")
 
