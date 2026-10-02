@@ -343,7 +343,12 @@ if run_button:
                              "Est. Win Prob %", "Annualized Yield %", "Score", "Lev", "IV/HV",
                              "Exit Target ($)", "Next Earnings", "Earnings Alert",
                              "Breakeven", "Capital Req. $", "Open Interest", "Spread %"]
-            currency_fmt = {"Capital Req. $": "${:,.0f}", "Premium $": "${:,.0f}"}
+            col_fmt = {
+                "Strike": "{:.2f}", "Premium (Bid)": "{:.2f}", "Premium $": "${:,.0f}",
+                "Delta": "{:.3f}", "Est. Win Prob %": "{:.1f}", "Annualized Yield %": "{:.1f}",
+                "Score": "{:.2f}", "IV/HV": "{:.2f}", "Breakeven": "{:.2f}",
+                "Capital Req. $": "${:,.0f}", "Open Interest": "{:,.0f}", "Spread %": "{:.1f}",
+            }
 
             def highlight_earnings(row):
                 color = "background-color: #ffcdd2" if row.get("Earnings Alert") else ""
@@ -352,7 +357,7 @@ if run_button:
             st.subheader("All candidates (sorted by Score within each ticker)")
             summary_view = summary[["Ticker"] + display_cols]
             st.dataframe(
-                summary_view.style.apply(highlight_earnings, axis=1).format(currency_fmt),
+                summary_view.style.apply(highlight_earnings, axis=1).format(col_fmt, na_rep="—"),
                 width="stretch", hide_index=True,
             )
 
@@ -364,12 +369,12 @@ if run_button:
                 if sub.empty:
                     continue
                 st.markdown(
-                    f"**{ticker}** — spot ${sub['Spot Price'].iloc[0]} · "
-                    f"50D SMA ${sub['50D SMA'].iloc[0]} · 52W Low ${sub['52W Low'].iloc[0]}"
+                    f"**{ticker}** — spot &#36;{sub['Spot Price'].iloc[0]} · "
+                    f"50D SMA &#36;{sub['50D SMA'].iloc[0]} · 52W Low &#36;{sub['52W Low'].iloc[0]}"
                 )
                 sub_view = sub[display_cols]
                 st.dataframe(
-                    sub_view.style.apply(highlight_earnings, axis=1).format(currency_fmt),
+                    sub_view.style.apply(highlight_earnings, axis=1).format(col_fmt, na_rep="—"),
                     width="stretch", hide_index=True,
                 )
 
